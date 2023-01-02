@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+import sys
+import re
+from itertools import islice
+
+unsafe_pattern = re.compile(r"^[#~]|[^\w@%+=:,./#~$-]|\$(?!$)", re.ASCII)
+
+
+def build_concatenator(from_squoted, from_dquoted, from_escaped, preferred_prefix=None):
+    preferred_s_prefix = preferred_prefix or from_squoted[-1:]
+    preferred_d_prefix = preferred_prefix or from_dquoted[-1:]
+    preferred_e_prefix = preferred_prefix or from_escaped[-1:]
+
+    def build_next(squoted, dquoted, escaped):
+        best_candidate, best_candidate_conv, best_score = None, None, None
+        if squoted:
+            score = 2 * (len(squoted) + len(from_squoted)) - squoted.startswith(preferred_s_prefix)
+            if best_score is None or score < best_score:
+                best_candidate, best_candidate_conv, best_score = squoted, from_squoted, score
+        if dquoted:
+            score = 2 * (len(dquoted) + len(from_dquoted)) - dquoted.startswith(preferred_d_prefix)
+            if best_score is None or score < best_score:
+                best_candidate, best_candidate_conv, best_score = dquoted, from_dquoted, score
+        if escaped:
+            score = 2 * (len(escaped) + len(from_escaped)) - escaped.startswith(preferred_e_prefix)
+            if best_score is None or score < best_score:
+                best_candidate, best_candidate_conv, best_score = escaped, from_escaped, score
+        return best_candidate + best_candidate_conv
+
+    return build_next
+
+
+next_squoted = build_concatenator("", "\"'", "'", preferred_prefix="'")
+next_dquoted = build_concatenator("'\"", "", '"', preferred_prefix='"')
+next_escaped = build_concatenator("'", '"', "")
+
+
+def join(args):
+    return " ".join(quote(arg) for arg in args)
+
+
+def quote(arg):
+    squoted = "'"
+    dquoted = '"'
+    escaped = ""
+
+    start = 0
+    for m in unsafe_pattern.finditer(arg):
+        safe_str = arg[start : m.start()]
+        start = m.end()
+
+        c = m.group()
+        assert len(c) == 1
+
+        if c == "'":
+            squoted = None
+        else:
+            squoted = f"{squoted}{safe_str}{c}"
+
+        if c in '$`"\\':
+            dquoted = f"{dquoted}{safe_str}\\{c}"
+        else:
+            dquoted = f"{dquoted}{safe_str}{c}"
+
+        if c == "\n":
+            escaped = None
+        else:
+            escaped = f"{escaped}{safe_str}\\{c}"
+
+        squoted, dquoted, escaped = (
+            next_squoted(squoted, dquoted, escaped),
+            next_dquoted(squoted, dquoted, escaped),
+            next_escaped(squoted, dquoted, escaped),
+        )
+
+    if safe_str := arg[start:]:
+        squoted += safe_str
+        dquoted += safe_str
+        escaped += safe_str
+
+    return next_escaped(squoted, dquoted, escaped)
+
+
+if __name__ == "__main__":
+    print(join(islice(sys.argv, 1, None)))
